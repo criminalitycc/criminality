@@ -23439,7 +23439,7 @@ do
             end
         end)
 
-        username = (s and data) and "@"..data["username"] or "?"
+        username = "@criminalitycc"
 
         if username ~= "?" then
             s, avatar = pcall(function()
