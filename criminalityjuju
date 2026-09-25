@@ -9897,7 +9897,7 @@ do
 
     menu_references["remove_jump_cooldown"] = menu_references["movement_section"]:create_element({["name"] = "remove jump cooldown"}, {["toggle"] = {["flag"] = "remove_jump_cooldown"}})
     menu_references["remove_slowdowns"] = menu_references["movement_section"]:create_element({["name"] = "remove slowdowns"}, {["toggle"] = {["flag"] = "remove_slowdowns"}})
-    
+
     -- >> ( jump power )
 
     menu_references["jump_power"] = menu_references["movement_section"]:create_element({["name"] = "jump power"}, {["toggle"] = {["flag"] = "jump_power"}})
@@ -10500,6 +10500,10 @@ do
     create_connection(menu_references["unlock_camera_distance"]["on_toggle_change"], function(bool)
         local_player["CameraMaxZoomDistance"] = bool and 9e9 or old_distance
     end)
+
+    -- >> ( example )
+
+    menu_references["example"] = menu_references["utility_section"]:create_element({["name"] = "example"}, {["toggle"] = {["flag"] = "example"}})
 
     -- >> ( auto reload )
 
@@ -11979,6 +11983,7 @@ do
         menu_references["server_position_indicator"] = menu_references["hud_section"]:create_element({["name"] = "server position indicator"}, {["toggle"] = {["flag"] = "server_position_indicator"}})
         menu_references["server_position_indicator_settings"] = menu_references["server_position_indicator"]:create_settings()
         menu_references["smooth_server_position_indicator"] = menu_references["server_position_indicator_settings"]:create_element({["name"] = "smooth"}, {["toggle"] = {["flag"] = "smooth_server_position_indicator"}})
+        menu_references["always_show_server_position_indicator"] = menu_references["server_position_indicator_settings"]:create_element({["name"] = "always show"}, {["toggle"] = {["flag"] = "always_show_server_position_indicator"}})
 
         menu_references["server_position_indicator_icon_color"] = menu_references["server_position_indicator_settings"]:create_element({["name"] = "icon color"}, {["colorpicker"] = {["color_flag"] = "server_position_indicator_icon_color", ["default_color"] = color3_fromrgb(193, 247, 255), ["default_transparency"] = 0.89, ["transparency_flag"] = "server_position_indicator_icon_transparency"}})
         menu_references["server_position_indicator_glow_color"] = menu_references["server_position_indicator_settings"]:create_element({["name"] = "glow color"}, {["colorpicker"] = {["color_flag"] = "server_position_indicator_glow_color", ["default_color"] = color3_fromrgb(193, 247, 255), ["default_transparency"] = 0.9, ["transparency_flag"] = "server_position_indicator_glow_transparency"}})
@@ -13006,11 +13011,12 @@ do
     local data = base64_decode("iVBORw0KGgoAAAANSUhEUgAAAB0AAAAdCAMAAABhTZc9AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAPUExURQAAAP///wwMDP39/QAAAJn0DigAAAAFdFJOU/////8A+7YOUwAAAAlwSFlzAABLlgAAS5YBPIKNxAAAABh0RVh0U29mdHdhcmUAUGFpbnQuTkVUIDUuMS4y+7wDtgAAALZlWElmSUkqAAgAAAAFABoBBQABAAAASgAAABsBBQABAAAAUgAAACgBAwABAAAAAgAAADEBAgAQAAAAWgAAAGmHBAABAAAAagAAAAAAAAD7fwcA6AMAAPt/BwDoAwAAUGFpbnQuTkVUIDUuMS4yAAMAAJAHAAQAAAAwMjMwAaADAAEAAAABAAAABaAEAAEAAACUAAAAAAAAAAIAAQACAAQAAABSOTgAAgAHAAQAAAAwMTAwAAAAAFgdiCkiK10LAAAAZ0lEQVQ4T+XT0QqAMAgF0Gv5/9/cdJrXPYweopeEoe5MGKOgHMDSR/aAiPSNyBaGnT9S4Oi3pnqOtuEqE5kfaiHxG8pYTJoHrMzdzFu1h0qt57oLH58a/YhFfUU/4s967tT/Iv4mVS+LEAmXjonxPAAAAABJRU5ErkJggg==")
     local last_pos = nil
     local do_smooth_server_position_indicator = nil
+    local do_always_show_server_position_indicator = nil
 
     local do_server_position_indicator = LPH_JIT_MAX(function(dt)
-        if local_client_position ~= local_server_position then
+        if local_client_position ~= local_server_position or do_always_show_server_position_indicator then
             local local_server_position = local_server_position["p"]
-            
+
             local pos, on_screen = world_to_viewport_point(camera, local_server_position)
 
             if do_smooth_server_position_indicator then
@@ -13067,6 +13073,10 @@ do
     create_connection(menu_references["smooth_server_position_indicator"]["on_toggle_change"], function(value)
         last_pos = nil
         do_smooth_server_position_indicator = value
+    end)
+
+    create_connection(menu_references["always_show_server_position_indicator"]["on_toggle_change"], function(value)
+        do_always_show_server_position_indicator = value
     end)
 
     create_connection(menu_references["server_position_indicator"]["on_toggle_change"], function(value)
@@ -20541,6 +20551,36 @@ do
 
     create_connection(menu_references["view_target_stop_when_knocked"]["on_toggle_change"], function(value)
         view_target_stop_when_knocked = value
+    end)
+
+    -- >> ( face target )
+
+    local do_face_target_enabled = nil
+
+    local do_face_target = LPH_JIT_MAX(function(dt, hrp)
+        if do_face_target_enabled and ragebot_target and hrp then
+            local target_hrp = ragebot_target[4]["HumanoidRootPart"]
+            if target_hrp then
+                local current_position = hrp["Position"]
+                local target_position = target_hrp["Position"]
+                local direction = (target_position - current_position).Unit
+                hrp["CFrame"] = CFrame["new"](current_position, current_position + direction)
+            end
+        end
+    end)
+
+    create_connection(menu_references["face_target"]["on_toggle_change"], function(value)
+        do_face_target_enabled = value
+        for i = 1, #heartbeat do
+            if heartbeat[i] == do_face_target then
+                remove(heartbeat, i)
+                break
+            end
+        end
+
+        if value then
+            heartbeat[#heartbeat+1] = do_face_target
+        end
     end)
 
     -- >> ( auto loadout )
