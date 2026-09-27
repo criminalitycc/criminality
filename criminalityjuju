@@ -9543,6 +9543,7 @@ do
                     local_knocked = knocked["Value"]
                     signals["on_local_knocked"]:Fire(local_knocked)
                 end)
+
             end
         elseif attributes then
             local armor = attributes["armor"]
@@ -10501,25 +10502,160 @@ do
         local_player["CameraMaxZoomDistance"] = bool and 9e9 or old_distance
     end)
 
-    -- >> ( example )
+    -- >> ( utility order: longest label to shortest label )
 
-    menu_references["example"] = menu_references["utility_section"]:create_element({["name"] = "example"}, {["toggle"] = {["flag"] = "example"}})
-
-    -- >> ( auto reload )
-
+    menu_references["spread_changer"] = menu_references["utility_section"]:create_element({["name"] = "spread changer"}, {["toggle"] = {["flag"] = "spread_changer"}})
+    menu_references["spread_changer_settings"] = menu_references["spread_changer"]:create_settings()
+    menu_references["spread_changer_spread"] = menu_references["spread_changer_settings"]:create_element({["name"] = "spread"}, {["slider"] = {["flag"] = "spread_changer_spread", ["min"] = 0, ["max"] = 100, ["default"] = 0, ["suffix"] = "%"}})
+    menu_references["infinite_range"] = menu_references["utility_section"]:create_element({["name"] = "infinite range"}, {["toggle"] = {["flag"] = "infinite_range"}})
     menu_references["auto_reload"] = menu_references["utility_section"]:create_element({["name"] = "auto reload"}, {["toggle"] = {["flag"] = "auto_reload"}})
     menu_references["auto_reload_settings"] = menu_references["auto_reload"]:create_settings()
     menu_references["auto_reload_activate_when"] = menu_references["auto_reload_settings"]:create_element({["name"] = "activate when"}, {["dropdown"] = {["flag"] = "auto_reload_activate_when", ["options"] = {"target knocked", "target died", "clip empty"}, ["multi"] = true, ["default"] = {"clip empty"}}})
+    menu_references["auto_reload_method"] = menu_references["auto_reload_settings"]:create_element({["name"] = "method"}, {["dropdown"] = {["flag"] = "auto_reload_method", ["options"] = {"remote", "keypress"}, ["default"] = {"remote"}, ["requires_one"] = true}})
+    menu_references["misc_anti_stomp"] = menu_references["utility_section"]:create_element({["name"] = "anti stomp"}, {["toggle"] = {["flag"] = "misc_anti_stomp"}})
+    menu_references["misc_anti_stomp_settings"] = menu_references["misc_anti_stomp"]:create_settings()
+    menu_references["misc_anti_stomp_method"] = menu_references["misc_anti_stomp_settings"]:create_element({["name"] = "method"}, {["dropdown"] = {["flag"] = "misc_anti_stomp_method", ["options"] = {"fast", "fling reset", "hvh"}, ["default"] = {"fast"}, ["requires_one"] = true}})
+    menu_references["rapid_fire"] = menu_references["utility_section"]:create_element({["name"] = "rapid fire"}, {["toggle"] = {["flag"] = "rapid_fire"}})
+    if game_data["forcefield_prediction"] then
+        menu_references["fake_ping"] = menu_references["utility_section"]:create_element({["name"] = "fake ping"}, {["toggle"] = {["flag"] = "fake_ping"}})
+        menu_references["fake_ping_settings"] = menu_references["fake_ping"]:create_settings()
+        menu_references["fake_ping_value"] = menu_references["fake_ping_settings"]:create_element({["name"] = "value"}, {["slider"] = {["flag"] = "fake_ping_value", ["min"] = 0, ["max"] = 1, ["default"] = 0.25, ["decimals"] = 3, ["suffix"] = "s"}})
+    end
+    menu_references["force_reset"] = menu_references["utility_section"]:create_element({["name"] = "force reset"}, {["button"] = {}})
+
+    -- >> ( auto reload )
+
+    -- >> ( rapid fire )
+
+    local modified_tools = {}
+
+    local setup_full_auto = function(tool)
+        if modified_tools[tool] or not tool:FindFirstChild("GunScript") then
+            return
+        end
+
+        local connections = getconnections(tool["Activated"])
+        for _, connection in connections do
+            local callback = connection["Function"]
+            if callback then
+                local info = debug.getinfo(callback)
+                for i = 1, (info["nups"] or 0) do
+                    local value = debug.getupvalue(callback, i)
+                    if type(value) == "number" and value > 0 and value < 0.5 then
+                        debug.setupvalue(callback, i, 0)
+                    end
+                end
+            end
+        end
+
+        modified_tools[tool] = true
+    end
+
+    create_connection(run_service["RenderStepped"], function()
+        if not flags["rapid_fire"] then
+            return
+        end
+
+        local character = local_player["Character"]
+        if not character then
+            return
+        end
+
+        local tool = character:FindFirstChildOfClass("Tool")
+        if tool then
+            setup_full_auto(tool)
+
+            if user_input_service:IsMouseButtonPressed(Enum["UserInputType"]["MouseButton1"]) then
+                tool:Activate()
+            end
+        end
+    end)
+
+    -- >> ( spread changer )
+
+    local spread_config = {BulletSpread = {Enabled = false, Amount = 0}}
+    local spread_original_random = nil
+    local spread_hooked = false
+
+    create_connection(menu_references["spread_changer"]["on_toggle_change"], function(value)
+        spread_config.BulletSpread.Enabled = value
+
+        if not value or spread_hooked then
+            return
+        end
+
+        spread_original_random = hookfunction(math.random, function(...)
+            local args = {...}
+
+            if checkcaller() then
+                return spread_original_random(...)
+            end
+
+            if (#args == 0) or
+                (args[1] == -0.05 and args[2] == 0.05) or
+                (args[1] == -0.1) or (args[1] == -0.05) then
+                if spread_config.BulletSpread.Enabled then
+                    return spread_original_random(...) * (spread_config.BulletSpread.Amount / 100)
+                end
+            end
+
+            return spread_original_random(...)
+        end)
+
+        spread_hooked = true
+    end)
+
+    create_connection(menu_references["spread_changer_spread"]["on_slider_change"], function(value)
+        spread_config.BulletSpread.Amount = value
+    end)
+
+    -- >> ( infinite range )
+
+    create_connection(run_service["RenderStepped"], function()
+        if not flags["infinite_range"] then
+            return
+        end
+
+        local character = local_player["Character"]
+        if character then
+            for _, item in character:GetDescendants() do
+                if item:IsA("NumberValue") and item["Name"] == "Range" then
+                    item["Value"] = 9999
+                end
+            end
+        end
+
+        local backpack = local_player["Backpack"]
+        if backpack then
+            for _, item in backpack:GetDescendants() do
+                if item:IsA("NumberValue") and item["Name"] == "Range" then
+                    item["Value"] = 9999
+                end
+            end
+        end
+    end)
 
     local auto_reload_connection = nil
     local auto_reload_connection2 = nil
     local do_auto_reload_target_knocked = false
     local do_auto_reload_target_died = false
     local do_auto_reload_clip_empty = true
+    local auto_reload_keypress_sent = false
 
     local do_auto_reload = LPH_JIT_MAX(function()
         if local_tool and local_gun and local_ammo == 0 and do_auto_reload_clip_empty and not local_reloading and not purchasing then
-            do_reload(local_tool)
+            if flags["auto_reload_method"] and flags["auto_reload_method"][1] == "keypress" then
+                if not auto_reload_keypress_sent then
+                    auto_reload_keypress_sent = true
+                    keypress(0x52)
+                    wait()
+                    keyrelease(0x52)
+                end
+            else
+                do_reload(local_tool)
+            end
+        elseif local_ammo ~= 0 then
+            auto_reload_keypress_sent = false
         end
     end)
 
@@ -10555,6 +10691,8 @@ do
                 auto_reload_connection2 = create_connection(signals["on_player_died"], do_reload)
             end
             heartbeat[#heartbeat+1] = do_auto_reload
+        else
+            auto_reload_keypress_sent = false
         end
     end)
 
@@ -10594,22 +10732,49 @@ do
         end
     end)
 
-    -- >> ( fake ping )
-
-    if game_data["forcefield_prediction"] then
-        menu_references["fake_ping"] = menu_references["utility_section"]:create_element({["name"] = "fake ping"}, {["toggle"] = {["flag"] = "fake_ping"}})
-        menu_references["fake_ping_settings"] = menu_references["fake_ping"]:create_settings()
-        menu_references["fake_ping_value"] = menu_references["fake_ping_settings"]:create_element({["name"] = "value"}, {["slider"] = {["flag"] = "fake_ping_value", ["min"] = 0, ["max"] = 1, ["default"] = 0.25, ["decimals"] = 3, ["suffix"] = "s"}})
-    end
-
     -- >> ( force reset )
 
-    create_connection(menu_references["utility_section"]:create_element({["name"] = "force reset"}, {["button"] = {}})["on_clicked"], function()
+    create_connection(menu_references["force_reset"]["on_clicked"], function()
         local humanoid = local_parts["Humanoid"]
 
         if humanoid then
             humanoid["Health"] = 0
         end
+    end)
+
+    local misc_anti_stomp_ko_connection = nil
+
+    local bind_misc_anti_stomp = function(character)
+        if misc_anti_stomp_ko_connection then
+            misc_anti_stomp_ko_connection:Disconnect()
+            misc_anti_stomp_ko_connection = nil
+        end
+
+        if not character then
+            return
+        end
+
+        local body_effects = wait_for_child(character, "BodyEffects", 5)
+        local knocked = body_effects and wait_for_child(body_effects, "K.O", 5)
+        if not knocked then
+            return
+        end
+
+        misc_anti_stomp_ko_connection = create_connection(knocked:GetPropertyChangedSignal("Value"), function()
+            if knocked["Value"] and flags["misc_anti_stomp"] and flags["misc_anti_stomp_method"] and
+                flags["misc_anti_stomp_method"][1] == "fast" then
+                local humanoid = local_parts["Humanoid"]
+
+                if humanoid then
+                    humanoid["Health"] = 0
+                end
+            end
+        end)
+    end
+
+    bind_misc_anti_stomp(local_character)
+    create_connection(signals["on_local_character_added"], function()
+        bind_misc_anti_stomp(local_character)
     end)
 
     -- >> ( tools )
@@ -13201,14 +13366,6 @@ do
             menu_references["local_bullet_impacts_color"] = menu_references["local_bullet_impacts_settings"]:create_element({["name"] = "color"}, {["colorpicker"] = {["color_flag"] = "local_bullet_impacts_color", ["transparency_flag"] = "local_bullet_impacts_transparency", ["default_color"] = color3_fromrgb(133, 220, 255), ["default_transparency"] = 0.19}})
             menu_references["local_bullet_impacts_outline_color"] = menu_references["local_bullet_impacts_settings"]:create_element({["name"] = "outline color"}, {["colorpicker"] = {["color_flag"] = "local_bullet_impacts_outline_color", ["transparency_flag"] = "local_bullet_impacts_outline_transparency", ["default_color"] = color3_fromrgb(133, 220, 255), ["default_transparency"] = 0.5}})
             menu_references["local_bullet_impacts_lifetime"] = menu_references["local_bullet_impacts_settings"]:create_element({["name"] = "lifetime"}, {["slider"] = {["flag"] = "local_bullet_impacts_lifetime", ["min"] = 0.1, ["max"] = 1.5, ["decimals"] = 1, ["suffix"] = "s", ["prefix"] = "", ["default"] = 0.8}})
-        menu_references["local_bullet_tracers"] = menu_references["game_section"]:create_element({["name"] = "local bullet tracers"}, {["toggle"] = {["flag"] = "local_bullet_tracers"}})
-            menu_references["local_bullet_tracers_settings"] = menu_references["local_bullet_tracers"]:create_settings()
-            menu_references["local_bullet_tracers_type"] = menu_references["local_bullet_tracers_settings"]:create_element({["name"] = "type"}, {["dropdown"] = {["options"] = {"line", "beam"}, ["requires_one"] = true, ["flag"] = "local_bullet_tracers_type", ["default"] = {"beam"}}})
-            menu_references["local_bullet_tracers_style"] = menu_references["local_bullet_tracers_settings"]:create_element({["name"] = "style"}, {["dropdown"] = {["options"] = {"laser", "light", "flow"}, ["requires_one"] = true, ["flag"] = "local_bullet_tracers_style", ["default"] = {"laser"}}})
-            menu_references["local_bullet_tracers_color"] = menu_references["local_bullet_tracers_settings"]:create_element({["name"] = "color"}, {["colorpicker"] = {["color_flag"] = "local_bullet_tracers_color", ["transparency_flag"] = "local_bullet_tracers_transparency", ["default_color"] = color3_fromrgb(133, 220, 255), ["default_transparency"] = 0}})
-            menu_references["local_bullet_tracers_outline_color"] = menu_references["local_bullet_tracers_settings"]:create_element({["name"] = "outline color"}, {["colorpicker"] = {["color_flag"] = "local_bullet_tracers_outline_color", ["transparency_flag"] = "local_bullet_tracers_outline_transparency", ["default_color"] = color3_fromrgb(15, 15, 15), ["default_transparency"] = 0}})
-            menu_references["local_bullet_tracers_gradient_color"] = menu_references["local_bullet_tracers_settings"]:create_element({["name"] = "gradient color"}, {["colorpicker"] = {["color_flag"] = "local_bullet_tracers_gradient_color", ["transparency_flag"] = "local_bullet_tracers_gradient_transparency", ["default_color"] = color3_fromrgb(241, 133, 255), ["default_transparency"] = 0}})
-            menu_references["local_bullet_tracers_lifetime"] = menu_references["local_bullet_tracers_settings"]:create_element({["name"] = "lifetime"}, {["slider"] = {["flag"] = "local_bullet_tracers_lifetime", ["min"] = 0.1, ["max"] = 1.5, ["decimals"] = 1, ["suffix"] = "s", ["prefix"] = "", ["default"] = 0.8}})
     end
     menu_references["shot_notifications"] = menu_references["game_section"]:create_element({["name"] = "shot notifications"}, {["toggle"] = {["flag"] = "shot_notifications"}})
         menu_references["shot_notifications_settings"] = menu_references["shot_notifications"]:create_settings()
@@ -13293,10 +13450,6 @@ do
             })
         }
 
-        local local_bullet_tracers_color = ColorSequence.new{ColorSequenceKeypoint.new(0, flags["local_bullet_tracers_color"]), ColorSequenceKeypoint.new(1, flags["local_bullet_tracers_gradient_color"])}
-        local local_bullet_tracers_transparency = NumberSequence.new{NumberSequenceKeypoint.new(0, flags["local_bullet_tracers_transparency"]), NumberSequenceKeypoint.new(1, flags["local_bullet_tracers_gradient_transparency"])}
-        local local_bullet_tracers_beam = beams[flags["local_bullet_tracers_style"][1]]
-
         local player_bullet_tracers_color = ColorSequence.new{ColorSequenceKeypoint.new(0, flags["player_bullet_tracers_color"]), ColorSequenceKeypoint.new(1, flags["player_bullet_tracers_gradient_color"])}
         local player_bullet_tracers_transparency = NumberSequence.new{NumberSequenceKeypoint.new(0, flags["player_bullet_tracers_transparency"]), NumberSequenceKeypoint.new(1, flags["player_bullet_tracers_gradient_transparency"])}
         local player_bullet_tracers_beam = beams[flags["player_bullet_tracers_style"][1]]
@@ -13335,9 +13488,9 @@ do
         local ignored = ignored[1] or workspace
 
         local do_beam_bullet_tracer = function(object, beam, position, is_local)
-            local new_beam = clone(is_local and local_bullet_tracers_beam or player_bullet_tracers_beam)
-            new_beam["Color"] = is_local and local_bullet_tracers_color or player_bullet_tracers_color
-            new_beam["Transparency"] = is_local and local_bullet_tracers_transparency or player_bullet_tracers_transparency
+            local new_beam = clone(player_bullet_tracers_beam)
+            new_beam["Color"] = player_bullet_tracers_color
+            new_beam["Transparency"] = player_bullet_tracers_transparency
 
             local attachment0 = create_instance("Attachment", {
                 ["CFrame"] = object["CFrame"],
@@ -13353,19 +13506,19 @@ do
             new_beam["Parent"] = ignored
 
             destroy(object)
-            delay(is_local and flags["local_bullet_tracers_lifetime"] or flags["player_bullet_tracers_lifetime"], destroy_beam, new_beam, attachment0, attachment1)
+            delay(flags["player_bullet_tracers_lifetime"], destroy_beam, new_beam, attachment0, attachment1)
         end
 
         local do_line_bullet_tracer = LPH_JIT_MAX(function(object, _, position, is_local)
-            local transparency = -(is_local and flags["local_bullet_tracers_transparency"] or flags["player_bullet_tracers_transparency"]) + 1
+            local transparency = -flags["player_bullet_tracers_transparency"] + 1
             local outline = create_real_drawing("Line", {
-                ["Color"] = is_local and flags["local_bullet_tracers_outline_color"] or flags["player_bullet_tracers_outline_color"],
+                ["Color"] = flags["player_bullet_tracers_outline_color"],
                 ["Thickness"] = 3,
-                ["Transparency"] = 1 - (is_local and flags["local_bullet_tracers_outline_transparency"] or flags["player_bullet_tracers_outline_transparency"]),
+                ["Transparency"] = 1 - flags["player_bullet_tracers_outline_transparency"],
                 ["Visible"] = true
             })
             local line = create_real_drawing("Line", {
-                ["Color"] = is_local and flags["local_bullet_tracers_color"] or flags["player_bullet_tracers_color"],
+                ["Color"] = flags["player_bullet_tracers_color"],
                 ["Thickness"] = 1,
                 ["Transparency"] = transparency,
                 ["Visible"] = true
@@ -13373,7 +13526,7 @@ do
             
             local end_position = position["p"]
             local start_position = object["Position"]
-            local lifetime = is_local and flags["local_bullet_tracers_lifetime"] or flags["player_bullet_tracers_lifetime"]
+            local lifetime = flags["player_bullet_tracers_lifetime"]
     
             local elapsed_time = 0
             local new_function = function(dt)
@@ -13443,52 +13596,6 @@ do
             end
             line:Destroy()
             line = nil
-        end)
-
-        local local_bullet_tracers_on_local_bullet_fired = nil
-
-        create_connection(menu_references["local_bullet_tracers"]["on_toggle_change"], function(value)
-            if local_bullet_tracers_on_local_bullet_fired then
-                local_bullet_tracers_on_local_bullet_fired:Disconnect()
-                local_bullet_tracers_on_local_bullet_fired = nil
-            end
-
-            if value then
-                local_bullet_tracers_on_local_bullet_fired = create_connection(signals["on_local_bullet_fired"], flags["local_bullet_tracers_type"][1] == "beam" and do_beam_bullet_tracer or do_line_bullet_tracer)
-            end
-        end)
-
-        create_connection(menu_references["local_bullet_tracers_type"]["on_dropdown_change"], function(value)
-            local is_beam = value[1] == "beam"
-
-            menu_references["local_bullet_tracers_gradient_color"]:set_visible(is_beam)
-            menu_references["local_bullet_tracers_style"]:set_visible(is_beam)
-            menu_references["local_bullet_tracers_outline_color"]:set_visible(not is_beam)
-
-            if local_bullet_tracers_on_local_bullet_fired then
-                local_bullet_tracers_on_local_bullet_fired:Disconnect()
-                local_bullet_tracers_on_local_bullet_fired = create_connection(signals["on_local_bullet_fired"], is_beam and do_beam_bullet_tracer or do_line_bullet_tracer)
-            end
-        end)
-
-        create_connection(menu_references["local_bullet_tracers_color"]["on_color_change"], function(value)
-            local_bullet_tracers_color = ColorSequence.new{ColorSequenceKeypoint.new(0, value), ColorSequenceKeypoint.new(1, flags["local_bullet_tracers_gradient_color"])}
-        end)
-
-        create_connection(menu_references["local_bullet_tracers_gradient_color"]["on_color_change"], function(value)
-            local_bullet_tracers_color = ColorSequence.new{ColorSequenceKeypoint.new(0, flags["local_bullet_tracers_color"]), ColorSequenceKeypoint.new(1, value)}
-        end)
-
-        create_connection(menu_references["local_bullet_tracers_color"]["on_transparency_change"], function(value)
-            local_bullet_tracers_transparency = NumberSequence.new{NumberSequenceKeypoint.new(0, value), NumberSequenceKeypoint.new(1, flags["local_bullet_tracers_gradient_transparency"])}
-        end)
-
-        create_connection(menu_references["local_bullet_tracers_gradient_color"]["on_transparency_change"], function(value)
-            local_bullet_tracers_transparency = NumberSequence.new{NumberSequenceKeypoint.new(0, flags["local_bullet_tracers_transparency"]), NumberSequenceKeypoint.new(1, value)}
-        end)
-
-        create_connection(menu_references["local_bullet_tracers_style"]["on_dropdown_change"], function(value)
-            local_bullet_tracers_beam = beams[value[1]]
         end)
 
         -- >> ( enemy tracers )
@@ -17974,6 +18081,20 @@ do
             tool = new_tool
         end
 
+        local restore_tool = function()
+            if old_grip and tool then
+                tool["Grip"] = old_grip
+            end
+            old_grip = nil
+            tool = nil
+        end
+
+        local refresh_tool = function()
+            local current_tool = tool
+            restore_tool()
+            reset_tool(current_tool or local_tool)
+        end
+
         create_connection(menu_references["animated_gun"]["on_toggle_change"], function(value)
             for i = 1, #heartbeat do
                 if heartbeat[i] == do_animated_gun then
@@ -17987,12 +18108,7 @@ do
                 animated_connection = nil
             end
 
-            if local_tool and old_grip then
-                local_tool["Grip"] = old_grip
-            end
-
-            old_grip = nil
-            tool = nil
+            restore_tool()
 
             if value then
                 reset_tool(local_tool) 
@@ -18005,9 +18121,7 @@ do
         create_connection(menu_references["animated_gun_horizontal"]["on_dropdown_change"], function(value)
             horizontal_animation = value and value[1] or nil
             
-            if local_tool and old_grip then
-                local_tool["Grip"] = old_grip
-            end
+            refresh_tool()
         end)
 
         create_connection(menu_references["animated_gun_horizontal_speed"]["on_slider_change"], function(value)
@@ -18017,9 +18131,7 @@ do
         create_connection(menu_references["animated_gun_vertical"]["on_dropdown_change"], function(value)
             vertical_animation = value and value[1] or nil
 
-            if local_tool and old_grip then
-                local_tool["Grip"] = old_grip
-            end
+            refresh_tool()
         end)
 
         create_connection(menu_references["animated_gun_vertical_speed"]["on_slider_change"], function(value)
@@ -18038,36 +18150,61 @@ do
         local material_tools_connection = nil
         local material = Enum["Material"]["Neon"]
         local last_tool = nil
+        local original_materials = {}
+
+        local restore_material = function(tool)
+            local originals = original_materials[tool]
+
+            if originals then
+                for part, original in originals do
+                    if part and part.Parent and part:IsA("BasePart") then
+                        part["Material"] = original["Material"]
+                        part["Color"] = original["Color"]
+                        part["Transparency"] = original["Transparency"]
+
+                        if part:IsA("MeshPart") and original["TextureID"] ~= nil then
+                            part["TextureID"] = original["TextureID"]
+                        end
+                    end
+                end
+            end
+
+            original_materials[tool] = nil
+        end
 
         local apply_material = LPH_JIT_MAX(function(tool)
             if last_tool then
-                local handle = find_first_child(last_tool, "Handle")
-
-                if handle and handle["ClassName"] == "MeshPart" then
-                    local attribute = last_tool:GetAttribute("AAAAAAAAAA")
-
-                    if attribute then
-                        handle["TextureID"] = last_tool:GetAttribute("AAAAAAAAAA")
-                        handle["Transparency"] = 0
-                    end
-                    handle["Material"] = Enum["Material"]["Plastic"]
-                end
-
-                last_tool:SetAttribute("AAAAAAAAAA", nil)
+                restore_material(last_tool)
+                last_tool = nil
             end
 
             if tool then
-                local handle = find_first_child(tool, "Handle")
+                local originals = {}
 
-                if handle and handle["ClassName"] == "MeshPart" then
-                    handle["Material"] = material
-                    handle["Color"] = flags["material_tools_color"]
-                    handle["Transparency"] = flags["material_tools_transparency"]
-                    tool:SetAttribute("AAAAAAAAAA", handle["TextureID"])
-                    handle["TextureID"] = ""
+                for _, part in tool:GetDescendants() do
+                    if part:IsA("BasePart") and part["Transparency"] < 1 then
+                        local original = {
+                            ["Material"] = part["Material"],
+                            ["Color"] = part["Color"],
+                            ["Transparency"] = part["Transparency"]
+                        }
+
+                        if part:IsA("MeshPart") then
+                            original["TextureID"] = part["TextureID"]
+                            part["TextureID"] = ""
+                        end
+
+                        originals[part] = original
+                        part["Material"] = material
+                        part["Color"] = flags["material_tools_color"]
+                        part["Transparency"] = flags["material_tools_transparency"]
+                    end
                 end
 
-                last_tool = tool
+                if next(originals) then
+                    original_materials[tool] = originals
+                    last_tool = tool
+                end
             end
         end)
 
@@ -18077,21 +18214,9 @@ do
                 material_tools_connection = nil
             end
 
-            if local_tool then
-                local handle = find_first_child(local_tool, "Handle")
-
-                if handle and handle["ClassName"] == "MeshPart" then
-                    handle["Material"] = Enum["Material"]["Plastic"]
-
-                    local attribute = last_tool:GetAttribute("AAAAAAAAAA")
-
-                    if attribute then
-                        handle["TextureID"] = attribute
-                        handle["Transparency"] = 0
-                    end
-
-                    last_tool:SetAttribute("AAAAAAAAAA", nil)
-                end
+            if last_tool then
+                restore_material(last_tool)
+                last_tool = nil
             end
 
             if value then
@@ -18107,11 +18232,12 @@ do
             material = value[1] == "neon" and Enum["Material"]["Neon"] or Enum["Material"]["ForceField"]
 
             if material_tools_connection then
-                if local_tool then
-                    local handle = find_first_child(local_tool, "Handle")
-
-                    if handle and handle["ClassName"] == "MeshPart" then
-                        handle["Material"] = material
+                local originals = last_tool and original_materials[last_tool]
+                if originals then
+                    for part in originals do
+                        if part and part.Parent then
+                            part["Material"] = material
+                        end
                     end
                 end
             end
@@ -18119,11 +18245,12 @@ do
 
         create_connection(menu_references["material_tools_color"]["on_color_change"], function(value)
             if material_tools_connection then
-                if local_tool then
-                    local handle = find_first_child(local_tool, "Handle")
-
-                    if handle and handle["ClassName"] == "MeshPart" then
-                        handle["Color"] = value
+                local originals = last_tool and original_materials[last_tool]
+                if originals then
+                    for part in originals do
+                        if part and part.Parent then
+                            part["Color"] = value
+                        end
                     end
                 end
             end
@@ -18131,11 +18258,12 @@ do
 
         create_connection(menu_references["material_tools_color"]["on_transparency_change"], function(value)
             if material_tools_connection then
-                if local_tool then
-                    local handle = find_first_child(local_tool, "Handle")
-
-                    if handle and handle["ClassName"] == "MeshPart" then
-                        handle["Transparency"] = value
+                local originals = last_tool and original_materials[last_tool]
+                if originals then
+                    for part in originals do
+                        if part and part.Parent then
+                            part["Transparency"] = value
+                        end
                     end
                 end
             end
@@ -18503,10 +18631,7 @@ do
         menu_references["fake_position_indicator_glow_color"] = menu_references["fake_position_settings"]:create_element({["name"] = "glow color"}, {["colorpicker"] = {["color_flag"] = "fake_position_indicator_glow_color", ["default_color"] = color3_fromrgb(0, 0, 0), ["default_transparency"] = 0.92, ["transparency_flag"] = "fake_position_indicator_glow_transparency"}})
         menu_references["fake_position_indicator_background_color"] = menu_references["fake_position_settings"]:create_element({["name"] = "background color"}, {["colorpicker"] = {["color_flag"] = "fake_position_indicator_background_color", ["default_color"] = color3_fromrgb(0, 0, 0), ["default_transparency"] = 0.85, ["transparency_flag"] = "fake_position_indicator_background_transparency"}})
         menu_references["fake_position_notifications"] = menu_references["fake_position_settings"]:create_element({["name"] = "notifications"}, {["toggle"] = {["flag"] = "fake_position_notifications"}})
-        menu_references["fake_position_safe_mode"] = menu_references["fake_position_settings"]:create_element({["name"] = "safe mode"}, {["toggle"] = {["flag"] = "fake_position_safe_mode"}})
-        menu_references["refresh_every"] = menu_references["fake_position_settings"]:create_element({["name"] = "refresh every"}, {["slider"] = {["flag"] = "refresh_every", ["min"] = 30, ["max"] = 240, ["default"] = 240, ["suffix"] = "s", ["max_text"] = "never"}})
-        menu_references["freeze_time"] = menu_references["fake_position_settings"]:create_element({["name"] = "freeze time"}, {["slider"] = {["flag"] = "fake_position_freeze_time", ["min"] = 0.05, ["max"] = 0.5, ["default"] = 0.2, ["decimals"] = 2, ["suffix"] = "s"}})
-        menu_references["sleep_rate"] = menu_references["fake_position_settings"]:create_element({["name"] = "sleep rate"}, {["slider"] = {["flag"] = "sleep_rate", ["min"] = 1, ["max"] = 100, ["default"] = 1, ["suffix"] = "%"}})
+        menu_references["fake_position_safe_mode"] = menu_references["fake_position_settings"]:create_element({["name"] = "void priority"}, {["toggle"] = {["flag"] = "fake_position_safe_mode"}})
         menu_references["void_hide"] = menu_references["anti_section"]:create_element({["name"] = "void hide"}, {["toggle"] = {["flag"] = "void_hide"}})
         menu_references["void_hide_settings"] = menu_references["void_hide"]:create_settings()
         menu_references["void_hide_type"] = menu_references["void_hide_settings"]:create_element({["name"] = "type"}, {["dropdown"] = {["options"] = {"random", "bait"}, ["flag"] = "void_hide_type", ["requires_one"] = true, ["default"] = {"random"}}})
@@ -18520,7 +18645,7 @@ do
         menu_references["void_hide_void_time"] = menu_references["void_hide_settings"]:create_element({["name"] = "void time"}, {["slider"] = {["min"] = 0.01, ["max"] = 2, ["decimals"] = 3, ["default"] = 0.47, ["flag"] = "void_hide_void_time", ["suffix"] = "s"}})
         menu_references["void_hide_teleport_time"] = menu_references["void_hide_settings"]:create_element({["name"] = "teleport time"}, {["slider"] = {["min"] = 0.01, ["max"] = 2, ["decimals"] = 3, ["default"] = 0.1, ["flag"] = "void_hide_teleport_time", ["suffix"] = "s"}})
         menu_references["void_hide_stop_if_forced"]:set_visible(false)
-    menu_references["utility_section"] = menu["groups"]["main"]:create_section("ragebot", "utility", 2, 0.7, 0.3)
+        menu_references["utility_section"] = menu["groups"]["main"]:create_section("ragebot", "utility", 2, 0.7, 0.3)
             if do_prediction then
             menu_references["teleport_bullets"] = menu_references["utility_section"]:create_element({["name"] = "teleport bullets"}, {["toggle"] = {["flag"] = "teleport_bullets"}})
 
@@ -18597,6 +18722,7 @@ do
         menu_references["follow_target_speed"] = menu_references["follow_target_settings"]:create_element({["name"] = "speed"}, {["slider"] = {["flag"] = "follow_target_speed", ["min"] = 1, ["max"] = 100, ["default"] = 75, ["suffix"] = "%"}})
         menu_references["follow_target_height"]:set_visible(false)
         menu_references["follow_target_speed"]:set_visible(false)
+
         if game_data["shop_folder"] then
             menu_references["auto_stomp"] = menu_references["utility_section"]:create_element({["name"] = "auto stomp"}, {["toggle"] = {["flag"] = "auto_stomp"}})
             menu_references["auto_stomp_settings"] = menu_references["auto_stomp"]:create_settings()
@@ -19826,7 +19952,7 @@ do
 
     -- >> ( fake position )
 
-    do
+    if false then
         local refresh_connection = nil
         local refresh_connection2 = nil
         local refresh_connection3 = nil
@@ -20186,6 +20312,279 @@ do
     end
 
     -- >> ( anti stomp)
+    do
+        local local_fake_position = nil
+        local fake_position_anchor = nil
+        local fake_position_loop_added = false
+        local fake_position_anchor_synced = false
+        local sethiddenproperty = sethiddenproperty
+
+        local do_fake_position = LPH_JIT_MAX(function(_, hrp)
+            if hrp and fake_position_anchor then
+                if not fake_position_anchor_synced then
+                    sethiddenproperty(hrp, "NetworkIsSleeping", false)
+                end
+
+                local old_cframe = hrp["CFrame"]
+                hrp["CFrame"] = fake_position_anchor
+                render_stepped_wait(render_stepped)
+                hrp["CFrame"] = old_cframe
+                sethiddenproperty(hrp, "NetworkIsSleeping", true)
+                fake_position_anchor_synced = true
+            end
+        end)
+
+        local remove_fake_position_loop = function()
+            if not fake_position_loop_added then
+                return
+            end
+
+            for i = #anti_aim, 1, -1 do
+                if anti_aim[i] == do_fake_position then
+                    remove(anti_aim, i)
+                    break
+                end
+            end
+
+            fake_position_loop_added = false
+        end
+
+        create_connection(menu_references["fake_position"]["on_toggle_change"], function(value)
+            if value then
+                fake_position_anchor = local_client_position
+                local_fake_position = fake_position_anchor["p"]
+                fake_position_anchor_synced = false
+
+                if flags["network_desync"] then
+                    menu_references["network_desync"]:set_toggle(false)
+                end
+
+                if flags["sender_rate_value"] then
+                    menu_references["sender_rate_value"]:set_toggle(false)
+                end
+
+                menu_references["network_desync"]:set_visible(false)
+                menu_references["sender_rate_value"]:set_visible(false)
+
+                if not fake_position_loop_added then
+                    anti_aim[#anti_aim+1] = do_fake_position
+                    fake_position_loop_added = true
+                end
+
+                if flags["fake_position_notifications"] then
+                    new_notification("fake position enabled", 2)
+                end
+                if flags["fake_position_indicator"] then
+                    menu_references["fake_position_indicator"]:set_toggle(true)
+                end
+            else
+                remove_fake_position_loop()
+
+                local hrp = local_parts["HumanoidRootPart"]
+                if hrp then
+                    sethiddenproperty(hrp, "NetworkIsSleeping", false)
+                end
+
+                menu_references["network_desync"]:set_visible(true)
+                menu_references["sender_rate_value"]:set_visible(true)
+                fake_position_anchor = nil
+                fake_position_anchor_synced = false
+                local_fake_position = nil
+                if flags["fake_position_notifications"] then
+                    new_notification("fake position disabled", 2)
+                end
+                if flags["fake_position_indicator"] then
+                    menu_references["fake_position_indicator"]:set_toggle(false)
+                end
+            end
+        end)
+
+
+        local visible = false
+        local circle = nil
+        local image = nil
+        local glow = nil
+        local shadow_transparency = {["Transparency"] = 0.09}
+        local circle_transparency = {["Transparency"] = 0.8}
+        local image_transparency = {["Transparency"] = 0.8}
+        local offset = vector3_new(0, 0.5, 0)
+        local data = base64_decode("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAVUExURf///1FRUXh4eHl5eXp6elJSUgAAAFkqzC8AAAAHdFJOU////////wAaSwNGAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAAGHRFWHRTb2Z0d2FyZQBQYWludC5ORVQgNS4xLjQS36aDAAAAtmVYSWZJSSoACAAAAAUAGgEFAAEAAABKAAAAGwEFAAEAAABSAAAAKAEDAAEAAAACAAAAMQECABAAAABaAAAAaYcEAAEAAABqAAAAAAAAAAx3AQDoAwAADHcBAOgDAABQYWludC5ORVQgNS4xLjQAAwAAkAcABAAAADAyMzABoAMAAQAAAAEAAAAFoAQAAQAAAJQAAAAAAAAAAgABAAIABAAAAFI5OAACAAcABAAAADAxMDAAAAAA0NlgAbHwM8wAAACjSURBVDhP1ZFLDsQwCENJ87n/kQvBGDKqNMuqb5EaYyWIyvrD5wJCYBip0QMwMwC/EA18QLt6h4yOn07ruxood2Enapkui+MBFNJCHQmhll7toAR4gZKJmEe5SmAUTfKFU1M+B2YZMh+eVDpYmSck9mHoVT9rUbJvmzW37nZ0Mx1NIkBrV5DejwDdxPsM8BmAH1sCR4TtI7AndFAbR+CJ9wNr3d6DDmOS3Q1aAAAAAElFTkSuQmCC")
+        local last_pos = nil
+        local do_smooth_fake_position_indicator = nil
+    
+        local do_fake_position_indicator = LPH_JIT_MAX(function(dt)
+            if local_fake_position and local_client_position ~= local_fake_position then                
+                local pos, on_screen = world_to_viewport_point(camera, local_fake_position)
+    
+                if do_smooth_fake_position_indicator then
+                    if not last_pos then
+                        last_pos = pos
+                    end
+                    pos = last_pos + (pos - last_pos) * dt*4^2
+                end
+    
+                last_pos = pos
+                if not on_screen and visible then
+                    tween(glow, hide_transparency, circular, out, 0)
+                    tween(image, hide_transparency, circular, out, 0)
+                    tween(circle, hide_transparency, circular, out, 0)
+                    visible = false
+                    return
+                elseif not visible and on_screen then
+                    spawn(function()
+                        tween(glow, shadow_transparency, circular, out, 0.07)
+                        tween(image, image_transparency, circular, out, 0.07)
+                        tween(circle, circle_transparency, circular, out, 0.07)
+                    end)
+                    visible = true
+                elseif not visible and not on_screen then
+                    visible = false
+                    return
+                end
+    
+                local pos2, _ = world_to_viewport_point(camera, local_fake_position + offset)
+    
+                local size = clamp((pos["Y"]-pos2["Y"])*10, 35, 45)
+    
+                local pos = vector2_new(pos["X"], pos["Y"])
+                circle["Size"] = vector2_new(size, size)
+                circle["Position"] = pos - vector2_new(size/2, size/2)
+    
+                local image_size = vector2_new(size*0.6, size*0.6)
+                image["Position"] = pos - image_size/2
+                image["Size"] = image_size
+    
+                local glow_size = vector2_new(size*1.1, size*1.1)
+                glow["Position"] = pos - glow_size/2
+                glow["Size"] = glow_size
+                glow["Rounding"] = size/2
+            elseif visible then
+                visible = false
+                tween(glow, hide_transparency, circular, out, 0.09)
+                tween(image, hide_transparency, circular, out, 0.09)
+                tween(circle, hide_transparency, circular, out, 0.09)
+            end
+        end)
+    
+        local create_drawing = identifyexecutor() == "Wave" and create_fake_drawing or create_real_drawing
+    
+        create_connection(menu_references["smooth_fake_position_indicator"]["on_toggle_change"], function(value)
+            last_pos = nil
+            do_smooth_fake_position_indicator = value
+        end)
+    
+        create_connection(menu_references["fake_position_indicator"]["on_toggle_change"], function(value)
+            menu_references["smooth_fake_position_indicator"]:set_visible(value)
+            menu_references["fake_position_indicator_background_color"]:set_visible(value)
+            menu_references["fake_position_indicator_icon_color"]:set_visible(value)
+            menu_references["fake_position_indicator_glow_color"]:set_visible(value)
+
+            last_pos = nil
+            for i = 1, #heartbeat do
+                if heartbeat[i] == do_fake_position_indicator then
+                    remove(heartbeat, i)
+                    break
+                end
+            end
+    
+            visible = false
+    
+            if circle then
+                circle:Destroy()
+                circle = nil
+            end
+    
+            if image then
+                image:Destroy()
+                image = nil
+            end
+    
+            if glow then
+                glow:Destroy()
+                glow = nil
+            end
+        
+            if value then
+                circle = create_drawing("Image", {
+                    ["Color"] = flags["fake_position_indicator_background_color"],
+                    ["Transparency"] = 0,
+                    ["ZIndex"] = 2,
+                    ["Visible"] = true,
+                    ["Data"] = pixel_image_data,
+                    ["Rounding"] = 30,
+                    ["Position"] = vector2_new(0, 0),
+                    ["Size"] = vector2_new(65, 65),
+                })
+    
+                image = create_drawing("Image", {
+                    ["Color"] = flags["fake_position_indicator_icon_color"],
+                    ["Transparency"] = 0,
+                    ["ZIndex"] = 3,
+                    ["Visible"] = true,
+                    ["Data"] = data,
+                    ["Position"] = vector2_new(0, 0),
+                    ["Size"] = vector2_new(29, 29),
+                })
+    
+                glow = create_drawing("Image", {
+                    ["Color"] = flags["fake_position_indicator_glow_color"],
+                    ["Transparency"] = 0,
+                    ["ZIndex"] = 1,
+                    ["Visible"] = true,
+                    ["Data"] = shadow_image_data,
+                    ["Rounding"] = 36,
+                    ["Position"] = vector2_new(0, 0),
+                    ["Size"] = vector2_new(73, 73)
+                })
+    
+                heartbeat[#heartbeat+1] = do_fake_position_indicator
+            end
+        end)
+    
+        create_connection(menu_references["fake_position_indicator_glow_color"]["on_color_change"], function(value)
+            if glow then
+                glow["Color"] = value
+            end
+        end)
+    
+        create_connection(menu_references["fake_position_indicator_glow_color"]["on_transparency_change"], function(value)
+            if glow and visible then
+                glow["Transparency"] = -value+1
+                shadow_transparency["Transparency"] = {["Transparency"] = -value+1}
+            end
+        end)
+    
+        create_connection(menu_references["fake_position_indicator_icon_color"]["on_color_change"], function(value)
+            if image then
+                image["Color"] = value
+            end
+        end)
+    
+        create_connection(menu_references["fake_position_indicator_icon_color"]["on_transparency_change"], function(value)
+            if image and visible then
+                image["Transparency"] = -value+1
+                image_transparency["Transparency"] = {["Transparency"] = -value+1}
+            end
+        end)
+    
+        create_connection(menu_references["fake_position_indicator_background_color"]["on_color_change"], function(value)
+            if circle then
+                circle["Color"] = value
+            end
+        end)
+    
+        create_connection(menu_references["fake_position_indicator_background_color"]["on_transparency_change"], function(value)
+            if circle and visible then
+                circle["Transparency"] = -value+1
+                circle_transparency["Transparency"] = {["Transparency"] = -value+1}
+            end
+        end)
+
+        menu_references["smooth_fake_position_indicator"]:set_visible(false)
+        menu_references["fake_position_indicator_background_color"]:set_visible(false)
+        menu_references["fake_position_indicator_icon_color"]:set_visible(false)
+        menu_references["fake_position_indicator_glow_color"]:set_visible(false)
+    end
 
     if menu_references["anti_stomp"] then
         local anti_stomp_connection = nil
@@ -20556,16 +20955,52 @@ do
     -- >> ( face target )
 
     local do_face_target_enabled = nil
+    local face_target_previous_auto_rotate = nil
+
+    local restore_face_target_rotation = function()
+        if face_target_previous_auto_rotate ~= nil then
+            local humanoid = local_parts["Humanoid"]
+            if humanoid then
+                humanoid["AutoRotate"] = face_target_previous_auto_rotate
+            end
+            face_target_previous_auto_rotate = nil
+        end
+    end
 
     local do_face_target = LPH_JIT_MAX(function(dt, hrp)
         if do_face_target_enabled and ragebot_target and hrp then
             local target_hrp = ragebot_target[4]["HumanoidRootPart"]
             if target_hrp then
+                -- Shiftlock can let Humanoid auto-rotation overwrite the
+                -- target-facing CFrame. Preserve its previous state and
+                -- hold it off only while face target has a valid target.
+                local humanoid = local_parts["Humanoid"]
+                if humanoid then
+                    if face_target_previous_auto_rotate == nil then
+                        face_target_previous_auto_rotate = humanoid["AutoRotate"]
+                    end
+                    humanoid["AutoRotate"] = false
+                end
+
                 local current_position = hrp["Position"]
                 local target_position = target_hrp["Position"]
-                local direction = (target_position - current_position).Unit
-                hrp["CFrame"] = CFrame["new"](current_position, current_position + direction)
+                -- Face the target horizontally only. Using the target's full
+                -- 3D position tilts the HumanoidRootPart while jumping,
+                -- which can make movement arc/curve toward the target.
+                local direction = vector3_new(
+                    target_position["X"] - current_position["X"],
+                    0,
+                    target_position["Z"] - current_position["Z"]
+                )
+
+                if direction["Magnitude"] > 0 then
+                    hrp["CFrame"] = CFrame["new"](current_position, current_position + direction)
+                end
+            else
+                restore_face_target_rotation()
             end
+        else
+            restore_face_target_rotation()
         end
     end)
 
@@ -20580,6 +21015,8 @@ do
 
         if value then
             heartbeat[#heartbeat+1] = do_face_target
+        else
+            restore_face_target_rotation()
         end
     end)
 
